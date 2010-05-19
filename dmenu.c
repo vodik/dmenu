@@ -19,6 +19,8 @@
 #define INRECT(X,Y,RX,RY,RW,RH) ((X) >= (RX) && (X) < (RX) + (RW) && (Y) >= (RY) && (Y) < (RY) + (RH))
 #define MIN(a, b)               ((a) < (b) ? (a) : (b))
 
+#define HIST_SIZE 20
+
 /* enums */
 enum { ColFG, ColBG, ColLast };
 
@@ -63,6 +65,8 @@ static void run(void);
 static void setup(Bool topbar);
 static int textnw(const char *text, unsigned int len);
 static int textw(const char *text);
+static int writehistory(char *command);
+static int readhistory(void);
 
 #include "config.h"
 
@@ -88,6 +92,9 @@ static Item *curr = NULL;
 static Window root, win;
 static int (*fstrncmp)(const char *, const char *, size_t n) = strncmp;
 static char *(*fstrstr)(const char *, const char *) = strstr;
+static char hist[HIST_SIZE][1024];
+static char *histfile = NULL;
+static int hcnt = 0;
 
 void
 appenditem(Item *i, Item **list, Item **last) {
@@ -453,6 +460,7 @@ kpress(XKeyEvent * e) {
 			fprintf(stdout, "%s", sel->text);
 		else if(*text)
 			fprintf(stdout, "%s", text);
+		writehistory( (sel == NULL) ? text : sel->text);
 		fflush(stdout);
 		running = False;
 		break;
@@ -521,8 +529,32 @@ readstdin(void) {
 	char *p, buf[1024];
 	unsigned int len = 0, max = 0;
 	Item *i, *new;
+	int k;
 
 	i = 0;
+	if( readhistory() )  {
+		for(k=0; k<hcnt; k++) {
+			len = strlen(hist[k]);
+			if (hist[k][len - 1] == '\n')
+				hist[k][len - 1] = 0;
+			p = strdup(hist[k]);
+			if(max < len) {
+				maxname = p;
+				max = len;
+			}
+			if(!(new = (Item *)malloc(sizeof(Item))))
+				eprint("fatal: could not malloc() %u bytes\n", sizeof(Item));
+			new->next = new->left = new->right = NULL;
+			new->text = p;
+			if(!i)
+				allitems = new;
+			else 
+				i->next = new;
+			i = new;
+		}
+	}
+	len=0; max=0;
+
 	while(fgets(buf, sizeof buf, stdin)) {
 		len = strlen(buf);
 		if (buf[len - 1] == '\n')
@@ -663,6 +695,48 @@ textw(const char *text) {
 	return textnw(text, strlen(text)) + dc.font.height;
 }
 
+static int
+writehistory(char *command) {
+   int i = 0, j = hcnt;
+   FILE *f;
+
+   if(!histfile || strlen(command) <= 0)
+      return 0;
+
+   if( (f = fopen(histfile, "w")) ) {
+      fputs(command, f);
+         fputc('\n', f);
+      for(; i<HIST_SIZE && i<j; i++) {
+         if(strcmp(command, hist[i]) != 0) {
+            fputs(hist[i], f);
+            fputc('\n', f);
+         }
+      }
+      fclose(f);
+      return 1;
+   }
+
+   return 0;
+}
+
+static int
+readhistory (void) {
+   char buf[1024];
+   FILE *f;
+
+
+   if(!histfile)
+      return 0;
+
+   if( (f = fopen(histfile, "r+")) ) {
+      while(fgets(buf, sizeof buf, f) && (hcnt < HIST_SIZE))  
+         strncpy(hist[hcnt++], buf, (strlen(buf) <= 1024) ? strlen(buf): 1024 );
+      fclose(f);
+   }
+
+   return hcnt;
+}
+
 int
 main(int argc, char *argv[]) {
 	unsigned int i;
@@ -694,11 +768,14 @@ main(int argc, char *argv[]) {
 		else if(!strcmp(argv[i], "-sf")) {
 			if(++i < argc) selfgcolor = argv[i];
 		}
+		else if(!strcmp(argv[i], "-hist")) {
+			if(++i < argc) histfile = argv[i];
+		}
 		else if(!strcmp(argv[i], "-v"))
 			eprint("dmenu-"VERSION", © 2006-2008 dmenu engineers, see LICENSE for details\n");
 		else
 			eprint("usage: dmenu [-i] [-b] [-fn <font>] [-nb <color>] [-nf <color>]\n"
-			       "             [-p <prompt>] [-sb <color>] [-sf <color>] [-v]\n");
+			       "             [-p <prompt>] [-hist <file> ] [-sb <color>] [-sf <color>] [-v]\n");
 	if(!setlocale(LC_CTYPE, "") || !XSupportsLocale())
 		fprintf(stderr, "warning: no locale support\n");
 	if(!(dpy = XOpenDisplay(NULL)))
