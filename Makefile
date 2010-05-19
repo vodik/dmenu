@@ -6,7 +6,10 @@ include config.mk
 SRC = dmenu.c
 OBJ = ${SRC:.c=.o}
 
-all: options dmenu
+SRC_PATH = dmenu_path.c
+OBJ_PATH = ${SRC_PATH:.c=.o}
+
+all: options dmenu dmenu_path
 
 options:
 	@echo dmenu build options:
@@ -24,9 +27,13 @@ dmenu: ${OBJ}
 	@echo CC -o $@
 	@${CC} -o $@ ${OBJ} ${LDFLAGS}
 
+dmenu_path: ${OBJ_PATH}
+	@echo CC -o $@
+	@${CC} -o $@ ${OBJ_PATH} ${LDFLAGS}
+
 clean:
 	@echo cleaning
-	@rm -f dmenu ${OBJ} dmenu-${VERSION}.tar.gz
+	@rm -f dmenu dmenu_path ${OBJ} ${OBJ_PATH} dmenu-${VERSION}.tar.gz
 
 dist: clean
 	@echo creating dist tarball
