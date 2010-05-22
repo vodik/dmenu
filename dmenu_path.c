@@ -33,332 +33,344 @@ static char* cache_path;
 
 static int uptodate(char** paths)
 {
-    struct stat dirstat;
-    time_t cache_time;
-    char** dirs;
+	struct stat dirstat;
+	time_t cache_time;
+	char** dirs;
 
-    if (stat(cache_path, &dirstat))
-    {
-	if (errno != ENOENT)
+	if (stat(cache_path, &dirstat))
 	{
-	    perror("stat");
+		if (errno != ENOENT)
+		{
+			perror("stat");
+		}
+		return 0;
 	}
-	return 0;
-    }
-    cache_time = dirstat.st_mtime;
+	cache_time = dirstat.st_mtime;
 
-    dirs = paths;
-    while (*dirs != NULL)
-    {
-	if (stat(*dirs, &dirstat))
+	dirs = paths;
+	while (*dirs != NULL)
 	{
-	    if (errno != ENOENT)
-		perror("stat");
-	    return 0;
+		if (stat(*dirs, &dirstat))
+		{
+			if (errno != ENOENT)
+				perror("stat");
+			return 0;
+		}
+
+		if (cache_time < dirstat.st_mtime)
+			return 0;
+
+		dirs++;
 	}
 
-	if (cache_time < dirstat.st_mtime)
-	    return 0;
+	return 1;
+}
 
-	dirs++;
-    }
-
-    return 1;
+static void die(const char* msg)
+{
+	perror(msg);
+	exit(EXIT_FAILURE);
 }
 
 static char* get_cache_path()
 {
-    const char* home = getenv("HOME");
-    char* path = (char*)malloc(strlen(home) + strlen("/.dmenu_cache") + 1);
-    strcpy(path, home);
-    strcat(path, "/.dmenu_cache");
-    return path;
+	const char* home;
+	char* path;
+	home = getenv("HOME");
+	if (home == NULL)
+		die("getenv");
+	path = (char*)malloc(strlen(home) + strlen("/.dmenu_cache") + 1);
+	if (path == NULL)
+		die("malloc");
+	strcpy(path, home);
+	strcat(path, "/.dmenu_cache");
+	return path;
 }
 
 static char* get_PATH()
 {
-    const char* path = getenv("PATH");
-    char* copy_path;
-    if (path == NULL)
-    {
-	perror("getenv");
-	exit(1);
-    }
+	const char* path = getenv("PATH");
+	char* copy_path;
+	if (path == NULL)
+		die("getenv");
 
-    copy_path = strdup(path);
-    return copy_path;
+	copy_path = strdup(path);
+	return copy_path;
 }
 
 static void split_PATH(char* PATH, char*** dirs_in)
 {
-    char** dirs;
-    const char* dir = strtok(PATH, ":");
-    size_t i = 0;
-    size_t allocated = 10;
-    dirs = (char**)malloc(sizeof(char*) * allocated);
+	char** dirs;
+	const char* dir = strtok(PATH, ":");
+	size_t i = 0;
+	size_t allocated = 10;
+	dirs = (char**)malloc(sizeof(char*) * allocated);
+	if (dirs == NULL)
+		die("malloc");
 
-    while (dir != NULL)
-    {
-	dirs[i] = (char*)malloc(strlen(dir) + 1);
-	strcpy(dirs[i], dir);
-	dir = strtok(NULL, ":");
-	i++;
-	if (i == allocated)
+	while (dir != NULL)
 	{
-	    allocated *= 2;
-	    dirs = (char**)realloc(dirs, allocated * sizeof(char**));
+		dirs[i] = (char*)malloc(strlen(dir) + 1);
+		if (dirs[i] == NULL)
+			die("malloc");
+		strcpy(dirs[i], dir);
+		dir = strtok(NULL, ":");
+		i++;
+		if (i == allocated)
+		{
+			allocated *= 2;
+			dirs = (char**)realloc(dirs, allocated * sizeof(char**));
+			if (dirs == NULL)
+				die("realloc");
+		}
 	}
-    }
-    dirs[i] = NULL;
+	dirs[i] = NULL;
 
-    *dirs_in = dirs;
+	*dirs_in = dirs;
 }
 
 static void free_charpp(char** in)
 {
-    char** ptr = in;
-    while (*ptr != NULL)
-    {
-	free(*ptr);
-	ptr++;
-    }
-    free(in);
+	char** ptr = in;
+	while (*ptr != NULL)
+	{
+		free(*ptr);
+		ptr++;
+	}
+	free(in);
 }
 
 static void fprint_charpp(char** in, FILE* out)
 {
-    char** ptr = in;
-    while (*ptr != NULL)
-    {
-	fputs(*ptr, out);
-	fputc('\n', out);
-	ptr++;
-    }
+	char** ptr = in;
+	while (*ptr != NULL)
+	{
+		fputs(*ptr, out);
+		fputc('\n', out);
+		ptr++;
+	}
 }
 
 static size_t count_charpp(char** in)
 {
-    char** ptr = in;
-    size_t count = 0;
-    while (*ptr != NULL)
-    {
-	count++;
-	ptr++;
-    }
-    return count;
+	char** ptr = in;
+	size_t count = 0;
+	while (*ptr != NULL)
+	{
+		count++;
+		ptr++;
+	}
+	return count;
 }
 
-
-static int isexecutable(const char* dir, const char* file)
+static int isexecutable(const char* fname)
 {
-    char* fname;
-    struct stat st;
-    int ret;
-    int success;
-    gid_t* grouplist;
-    fname = (char*)malloc(strlen(dir) + strlen(file) + 2);
-    strcpy(fname, dir);
-    strcat(fname, "/");
-    strcat(fname, file);
+	struct stat st;
+	int ret;
+	int success;
+	gid_t* grouplist;
 
-    ret = stat(fname, &st);
-    free(fname);
-    if (ret != 0)
-	return 0;
-    if (!S_ISREG(st.st_mode)) /* this catches regular files and symlinks as well */
-	return 0;
-    if ((st.st_uid == uid && (st.st_mode & S_IXUSR) != 0)
-	    || (st.st_uid != uid && st.st_gid != gid && (st.st_mode & S_IXOTH) != 0))
-    {
-	return 1;
-    }
-
-    /* check secondary groups */
-    if (st.st_mode & S_IXGRP)
-    {
-	success = 0;
-	ret = getgroups(0, 0);
-	grouplist = (gid_t*)malloc(sizeof(gid_t) * ret);
-	ret = getgroups(ret, grouplist);
-	while (ret != 0)
+	ret = stat(fname, &st);
+	if (ret != 0)
+		return 0;
+	if (!S_ISREG(st.st_mode)) /* this catches regular files and symlinks as well */
+		return 0;
+	if ((st.st_uid == uid && (st.st_mode & S_IXUSR) != 0)
+			|| (st.st_uid != uid && st.st_gid != gid && (st.st_mode & S_IXOTH) != 0))
 	{
-	    ret--;
-	    if (st.st_uid != uid /* for group to match, user must not match. */
-		    && st.st_gid == grouplist[ret])
-	    {
-		success = 1;
-		break;
-	    }
+		return 1;
 	}
-	free(grouplist);
-	return success;
-    }
 
-    return 0;
+	/* check secondary groups */
+	if (st.st_mode & S_IXGRP)
+	{
+		success = 0;
+		ret = getgroups(0, 0);
+		grouplist = (gid_t*)malloc(sizeof(gid_t) * ret);
+		if (grouplist == NULL)
+			die("malloc");
+		ret = getgroups(ret, grouplist);
+		while (ret != 0)
+		{
+			ret--;
+			if (st.st_uid != uid /* for group to match, user must not match. */
+					&& st.st_gid == grouplist[ret])
+			{
+				success = 1;
+				break;
+			}
+		}
+		free(grouplist);
+		return success;
+	}
+
+	return 0;
 }
 
 static void add(const char* prog, char*** progs)
 {
-    static unsigned progs_allocated = 0;
-    static unsigned progs_used = 0;
+	static unsigned progs_allocated = 0;
+	static unsigned progs_used = 0;
 
-    if (progs_used == progs_allocated)
-    {
-	progs_allocated = progs_allocated == 0 ? 256 : progs_allocated * 2;
-	*progs = (char**)realloc(*progs, sizeof(char*) * progs_allocated);
-    }
+	if (progs_used == progs_allocated)
+	{
+		progs_allocated = progs_allocated == 0 ? 256 : progs_allocated * 2;
+		*progs = (char**)realloc(*progs, sizeof(char*) * progs_allocated);
+		if (*progs == NULL)
+			die("realloc");
+	}
 
-    if (prog != NULL)
-    {
-	(*progs)[progs_used] = (char*)malloc(strlen(prog) + 1);
-	strcpy((*progs)[progs_used], prog);
-	progs_used++;
-    }
-    else
-    {
-	(*progs)[progs_used] = NULL;
-    }
+	if (prog != NULL)
+	{
+		(*progs)[progs_used] = (char*)malloc(strlen(prog) + 1);
+		if ((*progs)[progs_used] == NULL)
+			die("malloc");
+		strcpy((*progs)[progs_used], prog);
+		progs_used++;
+	}
+	else
+	{
+		(*progs)[progs_used] = NULL;
+	}
 }
 
 static void refresh_path(const char* path, char*** progs)
 {
-    DIR* dirp = opendir(path);
-    struct dirent* dp;
+	DIR* dirp = opendir(path);
+	struct dirent* dp;
+	char fullpath[PATH_MAX];
+	char* end;
+	strcpy(fullpath, path);
+	end = fullpath + strlen(fullpath);
 
-    if (dirp == NULL)
-    {
-	if (errno != ENOENT)
-	    perror("opendir");
-	return;
-    }
+	if (dirp == NULL)
+	{
+		if (errno != ENOENT)
+			perror("opendir");
+		return;
+	}
 
-    dp = readdir(dirp);
-    while (dp != NULL)
-    {
-	if (isexecutable(path, dp->d_name))
-	    add(dp->d_name, progs);
 	dp = readdir(dirp);
-    }
-    closedir(dirp);
+	while (dp != NULL)
+	{
+		strcat(end, "/");
+		strcpy(end + 1, dp->d_name);
+		if (isexecutable(fullpath))
+			add(dp->d_name, progs);
+		dp = readdir(dirp);
+	}
+	closedir(dirp);
 }
 
 static int compare(const void* a, const void* b)
 {
-    return strcmp(*(const char**)a, *(const char**)b);
+	return strcmp(*(const char**)a, *(const char**)b);
 }
 
 static void sort(char*** progs)
 {
-    qsort(*progs, count_charpp(*progs), sizeof(*progs), compare);
+	qsort(*progs, count_charpp(*progs), sizeof(*progs), compare);
 }
 
 static void uniq(char*** progs)
 {
-    char** progs_new = (char**)malloc(sizeof(char*) * (count_charpp(*progs) + 1));
-    char** ptr_1 = *progs;
-    char** ptr_2 = ptr_1 + 1;
-    unsigned long i = 0;;
-    while (*ptr_1 != NULL)
-    {
-	while (*ptr_2 != NULL && strcmp(*ptr_1, *ptr_2) == 0)
+	char** progs_new;
+	char** ptr_1 = *progs;
+	char** ptr_2 = ptr_1 + 1;
+	unsigned long i = 0;;
+
+	progs_new = (char**)malloc(sizeof(char*) * (count_charpp(*progs) + 1));
+	if (progs_new == NULL)
+		die("malloc");
+
+	while (*ptr_1 != NULL)
 	{
-	    free(*ptr_2);
-	    ptr_2++;
+		while (*ptr_2 != NULL && strcmp(*ptr_1, *ptr_2) == 0)
+		{
+			free(*ptr_2);
+			ptr_2++;
+		}
+		progs_new[i] = *ptr_1;
+		i++;
+		ptr_1 = ptr_2;
+		ptr_2++;
 	}
-	progs_new[i] = *ptr_1;
-	i++;
-	ptr_1 = ptr_2;
-	ptr_2++;
-    }
-    progs_new[i] = NULL;
+	progs_new[i] = NULL;
 
-    free(*progs);
+	free(*progs);
 
-    *progs = progs_new;
+	*progs = progs_new;
 }
 
 static void refresh(char** paths)
 {
-    char** progs = NULL;
-    FILE* out;
-    while (*paths != NULL)
-    {
-	refresh_path(*paths, &progs);
-	paths++;
-    }
-    add(NULL, &progs);
+	char** progs = NULL;
+	FILE* out;
+	while (*paths != NULL)
+	{
+		refresh_path(*paths, &progs);
+		paths++;
+	}
+	add(NULL, &progs);
 
-    out = fopen(cache_path, "w");
-    if (out == NULL)
-    {
-	perror("fopen");
-	exit(1);
-    }
+	out = fopen(cache_path, "w");
+	if (out == NULL)
+		die("fopen");
 
-    sort(&progs);
-    uniq(&progs);
-    fprint_charpp(progs, out);
-    fprint_charpp(progs, stdout);
+	sort(&progs);
+	uniq(&progs);
+	fprint_charpp(progs, out);
+	fprint_charpp(progs, stdout);
 
-    free_charpp(progs);
-    fclose(out);
+	free_charpp(progs);
+	fclose(out);
 }
 
 static void cat()
 {
-    FILE* cache = fopen(cache_path, "r");
-    char buf[4096];
-    struct stat cachestat;
-    size_t still_unread;
-    size_t chunk;
-    if (cache == NULL)
-    {
-	perror("fopen cache");
-	exit(1);
-    }
+	FILE* cache = fopen(cache_path, "r");
+	char buf[4096];
+	struct stat cachestat;
+	size_t still_unread;
+	size_t chunk;
+	if (cache == NULL)
+		die("fopen");
 
-    if (stat(cache_path, &cachestat))
-    {
-	perror("stat");
-	exit(1);
-    }
-    still_unread = cachestat.st_size;
+	if (stat(cache_path, &cachestat))
+		die("stat");
+	still_unread = cachestat.st_size;
 
-    while (still_unread > 0)
-    {
-	chunk = fread(buf, 1, 4096, cache);
-	still_unread -= chunk;
-	fwrite(buf, 1, chunk, stdout);
-    }
-    fclose(cache);
+	while (still_unread > 0)
+	{
+		chunk = fread(buf, 1, sizeof(buf), cache);
+		still_unread -= chunk;
+		fwrite(buf, 1, chunk, stdout);
+	}
+	fclose(cache);
 }
 
 int main(int argc, char *argv[])
 {
-    char* PATH = get_PATH();
-    char** paths = NULL;
-    uid = getuid();
-    gid = getgid();
-    if (uid == 0 || gid == 0)
-    {
-	puts("I refuse to run as root!");
-	return 1;
-    }
+	char* PATH;
+	char** paths = NULL;
+	PATH = get_PATH();
+	uid = getuid();
+	gid = getgid();
 
-    cache_path = get_cache_path();
-    split_PATH(PATH, &paths);
-    free(PATH);
-    sort(&paths);
-    uniq(&paths);
+	cache_path = get_cache_path();
+	split_PATH(PATH, &paths);
+	free(PATH);
+	sort(&paths);
+	uniq(&paths);
 
-    if ((argc == 2 && strcmp(argv[1], "--force") == 0)
-	    || !uptodate(paths))
-	refresh(paths);
-    else
-	cat();
+	if ((argc == 2 && strcmp(argv[1], "-f") == 0)
+			|| !uptodate(paths))
+		refresh(paths);
+	else
+		cat();
 
-    free_charpp(paths);
-    free(cache_path);
+	free_charpp(paths);
+	free(cache_path);
 
-    return 0;
+	return 0;
 }
